@@ -8,18 +8,48 @@ export type DispatcherPayload = Object;
 declare export class Payload {
     type: mixed;
 }
-declare export class CompletedPayload extends Payload {
-    value: ?mixed;
-}
-declare export class DidExecutedPayload extends Payload {
-    value: ?mixed;
+declare export interface UserDefinedPayload extends Payload {
+    [extraProps: string]: any;
 }
 declare export class ErrorPayload extends Payload {
     error: Error | mixed;
+    constructor({ error }: { error?: Error | any });
+}
+declare export class CompletedPayload extends Payload {
+    value: ?mixed;
+    constructor({ value }: { value?: any });
+}
+declare export class DidExecutedPayload extends Payload {
+    value: ?mixed;
+    constructor({ value }: { value?: any });
 }
 declare export class WillExecutedPayload extends Payload {
     args: Array<mixed>;
+    constructor({ args?: Array<any> });
 }
+declare export class TransactionBeganPayload extends Payload {
+    name: string;
+    constructor(name: string);
+}
+declare export class TransactionEndedPayload extends Payload {
+    name: string;
+    constructor(name: string);
+}
+declare export class StoreChangedPayload extends Payload {
+    store: StoreLike<any>;
+    constructor(store: StoreLike<any>);
+}
+declare export type DispatchedPayload =
+    | Payload
+    | UserDefinedPayload
+    | ErrorPayload
+    | CompletedPayload
+    | DidExecutedPayload
+    | WillExecutedPayload
+    | TransactionBeganPayload
+    | TransactionEndedPayload
+    | StoreChangedPayload;
+
 // Internal class
 declare export class DispatcherPayloadMeta {
     useCase: ?UseCase;
@@ -29,6 +59,24 @@ declare export class DispatcherPayloadMeta {
     isTrusted: boolean;
 }
 
+declare export interface StoreLike<T: any> {
+    getState: T;
+    onChange(handler: (stores: Array<StoreLike<T>>) => void): () => void;
+    release(): void;
+}
+
+declare export interface StoreGroupReasonForChange {
+    payload?: DispatchedPayload;
+    meta?: DispatcherPayloadMeta;
+}
+
+declare export interface StoreGroupExtension {
+    useStrict(): void;
+    onChange(handler: (stores: Array<StoreLike<any>>, details?: StoreGroupReasonForChange) => void): () => void;
+}
+
+declare export type StoreGroupLike = StoreGroupExtension & StoreLike<any> & Dispatcher & Committable;
+
 declare export class StoreGroup extends Dispatcher {
     constructor(stateStoreMapping: {[string]: Store}): void;
     getState(): Object;
@@ -37,19 +85,36 @@ declare export class StoreGroup extends Dispatcher {
     release(): void;
 }
 
-declare export class Context {
-    constructor({ dispatcher: Dispatcher, store: Store|StoreGroup }): void;
-    getState(): mixed;
-    onChange(onChangeHandler: (changingStores: Array<Store>) => mixed): Function;
-    useCase(useCase: UseCase): UseCaseExecutor;
-    onWillExecuteEachUseCase(handler: (payload: WillExecutedPayload, meta: DispatcherPayloadMeta) => mixed): Function;
-    onDispatch(handler: (payload: DispatcherPayload|Payload, meta: DispatcherPayloadMeta) => mixed): Function;
-    onDidExecuteEachUseCase(handler: (payload: DidExecutedPayload, meta: DispatcherPayloadMeta) => mixed): Function;
-    onCompleteExecuteEachUseCase(handler: (payload: CompletedPayload, meta: DispatcherPayloadMeta) => mixed): Function;
-    onErrorDispatch(handler: (payload: ErrorPayload, meta: DispatcherPayloadMeta) => mixed): Function;
-    release(): void;
+declare export interface StoreStateMap {
+    +stores: Array<Store>;
+    +stateNames: Array<string>;
 }
 
+declare export class ContextArgs<T> {
+    dispatcher: Dispatcher;
+    store: StoreLike<T>;
+    options?: {
+        strict?: boolean
+    };
+}
+
+declare export class Context<T> {
+    constructor(args: ContextArgs<T>): void;
+    get events(): LifeCycleEventHub;
+    getState(): StoreStateMap<T>;
+    onChange(handler: (changingStores: Array<StoreLike<any>>) => void): () => void {
+    useCase(useCase: UseCaseFunction): UseCaseExecutor<FunctionalUseCase>;
+    useCase(useCaseLike: UseCaseLike): UseCaseExecutor<UseCaseLike>;
+    useCase(useCase: any): UseCaseExecutor<any>;
+    transaction(name: string, transactionHandler: (transactionContext: TransactionContext) => Promise<any>);
+
+    onWillExecuteEachUseCase(handler: (payload: WillExecutedPayload, meta: DispatcherPayloadMeta) => void): () => void;  // deprecated v0.13
+    onDispatch(handler: (payload: DispatchedPayload, meta: DispatcherPayloadMeta) => void): () => void;  // deprecated v0.13
+    onDidExecuteEachUseCase(handler: (payload: DidExecutedPayload, meta: DispatcherPayloadMeta) => void): () => void;  // deprecated v0.13
+    onCompleteEachUseCase(handler: (payload: CompletedPayload, meta: DispatcherPayloadMeta) => void): () => void;  // deprecated v0.13
+    onErrorDispatch(handler: (payload: ErrorPayload, meta: DispatcherPayloadMeta) => void): () => void;  // deprecated v0.13
+    release(): void;
+}
 
 declare export class Dispatcher extends events$EventEmitter {
     static isDispatcher(maybeDispatcher: mixed): boolean;
@@ -84,10 +149,61 @@ declare export class UseCaseContext {
     useCase(useCase: UseCase): UseCaseExecutor;
 }
 
-declare export class UseCaseExecutor {
-    onWillExecuteEachUseCase(handler: (payload: WillExecutedPayload, meta: DispatcherPayloadMeta) => mixed): void;
-    onDidExecuteEachUseCase(handler: (payload: DidExecutedPayload, meta: DispatcherPayloadMeta) => mixed): void;
-    onCompleteExecuteEachUseCase(handler: (payload: CompletedPayload, meta: DispatcherPayloadMeta) => mixed): Function;
-    execute(args?: Array<mixed>): Promise<void>;
+declare export interface UseCaseExecutor extends Dispatcher {
+    useCase: UseCaseLike;
+    executor(executor: (useCase: Pick<UseCaseLike, "execute">) => any): Promise<void>;
+    execute(): Promise<void>;
+    execute<T>(args: UseCaseLike): Promise<void>;
+    execute(...args: Array<any>): Promise<void>;
     release(): void;
+}
+
+declare export interface LifeCycleEventHubArgs {
+    dispatcher: Dispatcher;
+    storeGroup: StoreGroupLike;
+}
+declare export class LifeCycleEventHub {
+    constructor(args: LifeCycleEventHubArgs);
+    onChangeStore(handler: (payload: StoreChangedPayload, meta: DispatcherPayloadMeta) => void);
+    onBeginTransaction(handler: (payload: TransactionBeganPayload, meta: DispatcherPayloadMeta) => void);
+    onEndTransaction(handler: (payload: TransactionEndedPayload, meta: DispatcherPayloadMeta) => void);
+    onWillExecuteEachUseCase(handler: (payload: WillExecutedPayload, meta: DispatcherPayloadMeta) => void): () => void;
+    onDispatch(handler: (payload: DispatchedPayload, meta: DispatcherPayloadMeta) => void): () => void;
+    onDidExecuteEachUseCase(handler: (payload: DidExecutedPayload, meta: DispatcherPayloadMeta) => void): () => void;
+    onCompleteEachUseCase(handler: (payload: CompletedPayload, meta: DispatcherPayloadMeta) => void): () => void;
+    onErrorDispatch(handler: (payload: ErrorPayload, meta: DispatcherPayloadMeta) => void): () => void;
+    release(): void;
+}
+
+declare export type UseCaseFunction = (context?: FunctionalUseCaseContext) => (...args: Array<any>) => any;
+declare export interface DispatcherSender {
+    dispatch(payload: Payload): void;
+}
+declare export interface FunctionalUseCaseContext {
+    dispatcher: DispatcherSender;
+}
+
+declare export class FunctionalUseCase extends Dispatcher implements UseCaseLike {
+    id: string;
+    executor: Function;
+    dispatcher: Dispatcher;
+    name: string;
+    constructor(functionUseCase: (context: FunctionalUseCaseContext) => Function);
+    execute(..._: Array<any>): any;
+    throwError(error?: Error | any): void;
+}
+
+declare export interface UseCaseLike extends Dispatcher {
+    id: string;
+    name: string;
+    execute(...args: Array<any>): any;
+    throwError(error: Error): void;
+}
+
+declare export interface TransactionContext {
+    id: string;
+    useCase(useCase: UseCaseLike): UseCaseExecutor<UseCaseLike>;
+    useCase(useCase: UseCaseFunction): UseCaseExecutor<FunctionalUseCase>;
+    commit: () => void;
+    exit: () => void;
 }
